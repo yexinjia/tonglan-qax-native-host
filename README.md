@@ -90,13 +90,21 @@ cd tonglan-qax-native-host
 
 **不包含**扩展源码。
 
+## 自定义 Qaxbrowser 路径
+
+若自动找不到浏览器（例如装在 D/E 盘），在扩展弹窗「Qaxbrowser 路径」中填入本机可执行文件完整路径并保存，例如：
+
+`C:\Program Files\Qaxbrowser\Application\qaxbrowser.exe`
+
+路径保存在本机 Native Host 配置中；留空并保存可恢复自动查找。
+
 ## 常见问题
 
 **Q: Windows 提示 python_not_found？**  
 A: 安装 Python 3，在 **Python 官方安装向导**里勾选 “Add python.exe to PATH”，关掉并重新打开 PowerShell 后再装一次。
 
 **Q: Windows 提示 qaxbrowser_not_found？**  
-A: 确认已安装奇安信浏览器；若安装路径特殊，把该 `exe` 所在文件夹加到系统环境变量 Path 后再试，或把实际路径反馈给维护者。
+A: 确认已安装奇安信浏览器。默认会找 `…\Qaxbrowser\Application\qaxbrowser.exe`（含 C 盘 Program Files）。若装在 D/E 盘且不在常见目录，把该 `exe` 所在文件夹加到 Path，或把实际路径反馈给维护者。
 
 **Q: 换电脑要重装吗？**  
 A: 要。每台电脑装一次即可。
