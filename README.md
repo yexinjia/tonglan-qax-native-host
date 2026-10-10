@@ -50,6 +50,28 @@ irm https://raw.githubusercontent.com/yexinjia/tonglan-qax-native-host/main/inst
 .\install-native-host.ps1 -ChromeExtensionId <Chrome扩展ID>
 ```
 
+## 若 raw.githubusercontent.com 打不开
+
+国内网络有时无法访问 `raw.githubusercontent.com`（一键 `curl` / `irm` 会失败）。可改用克隆仓库后本地安装（默认一键命令仍然可用，网络正常时优先用上面的）：
+
+```bash
+git clone https://github.com/yexinjia/tonglan-qax-native-host.git
+cd tonglan-qax-native-host
+./install-native-host.sh                 # macOS · Firefox
+./install-native-host.sh <Chrome扩展ID>  # macOS · 再绑 Chrome
+```
+
+Windows（PowerShell）：
+
+```powershell
+git clone https://github.com/yexinjia/tonglan-qax-native-host.git
+cd tonglan-qax-native-host
+.\install-native-host.ps1
+.\install-native-host.ps1 -ChromeExtensionId <Chrome扩展ID>
+```
+
+也可在 GitHub 页面下载 ZIP，解压后执行对应安装脚本。
+
 ## 安装后检查
 
 1. 点击扩展图标  
