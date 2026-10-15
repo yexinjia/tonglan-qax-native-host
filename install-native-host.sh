@@ -19,10 +19,67 @@ FIREFOX_NM="${HOME}/Library/Application Support/Mozilla/NativeMessagingHosts"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOCAL_HOST="${SCRIPT_DIR}/open-qax.py"
 
-EXT_ID="${1:-${EXTENSION_ID:-}}"
-if [[ -z "${EXT_ID}" && -f "${ID_FILE}" ]]; then
-  EXT_ID="$(tr -d '[:space:]' < "${ID_FILE}")"
+# Collect new IDs from CLI args (space- or comma-separated) and/or EXTENSION_ID
+NEW_IDS=()
+if [[ $# -gt 0 ]]; then
+  for arg in "$@"; do
+    arg="${arg//,/ }"
+    for part in $arg; do
+      part="${part//[[:space:]]/}"
+      [[ -n "${part}" ]] && NEW_IDS+=("${part}")
+    done
+  done
+elif [[ -n "${EXTENSION_ID:-}" ]]; then
+  ext="${EXTENSION_ID//,/ }"
+  for part in $ext; do
+    part="${part//[[:space:]]/}"
+    [[ -n "${part}" ]] && NEW_IDS+=("${part}")
+  done
 fi
+
+merge_ids() {
+  python3 - "${ID_FILE}" "${NEW_IDS[@]}" <<'PY'
+import json, sys
+from pathlib import Path
+
+def load_ids(path):
+    if not path.is_file():
+        return []
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return []
+    ids = []
+    if text.startswith("["):
+        raw = json.loads(text)
+        if isinstance(raw, str):
+            ids = [raw]
+        else:
+            ids = [str(x).strip() for x in raw if str(x).strip()]
+    else:
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            for part in line.replace(",", " ").split():
+                part = part.strip()
+                if part:
+                    ids.append(part)
+        if not ids:
+            ids = [text.strip()]
+    return ids
+
+file_path = Path(sys.argv[1])
+new_ids = [x.strip() for x in sys.argv[2:] if x.strip()]
+merged = []
+seen = set()
+for i in load_ids(file_path) + new_ids:
+    if i not in seen:
+        seen.add(i)
+        merged.append(i)
+for i in merged:
+    print(i)
+PY
+}
 
 mkdir -p "${SUPPORT_DIR}"
 
@@ -36,23 +93,26 @@ chmod +x "${HOST_DST}"
 
 write_chrome_manifest() {
   local nm_dir="$1"
-  local origin="$2"
+  shift
   mkdir -p "${nm_dir}"
-  python3 - "$nm_dir" "$origin" "$HOST_NAME" "$HOST_DST" <<'PY'
+  python3 - "$nm_dir" "$HOST_NAME" "$HOST_DST" "$@" <<'PY'
 import json, sys
 from pathlib import Path
-nm_dir, origin, host_name, host_dst = sys.argv[1:5]
+
+nm_dir, host_name, host_dst = sys.argv[1:4]
+origins = sys.argv[4:]
 manifest = {
     "name": host_name,
     "description": "Open URL in Qaxbrowser for Tonglan Qax Open",
     "path": host_dst,
     "type": "stdio",
-    "allowed_origins": [origin],
+    "allowed_origins": origins,
 }
 path = Path(nm_dir) / f"{host_name}.json"
 path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 print(f"已写入 Chromium 系: {path}")
-print(f"  Origin: {origin}")
+for origin in origins:
+    print(f"  Origin: {origin}")
 PY
 }
 
@@ -78,15 +138,29 @@ PY
 
 write_firefox_manifest
 
-if [[ -n "${EXT_ID}" ]]; then
-  if [[ ! "${EXT_ID}" =~ ^[a-p]{32}$ ]]; then
-    echo "警告: 扩展 ID「${EXT_ID}」看起来不像 Chrome 扩展 ID（通常是 32 位 a-p）。继续安装…" >&2
+mapfile -t EXT_IDS < <(merge_ids)
+
+if [[ ${#EXT_IDS[@]} -gt 0 ]]; then
+  ORIGINS=()
+  for id in "${EXT_IDS[@]}"; do
+    if [[ ! "${id}" =~ ^[a-p]{32}$ ]]; then
+      echo "警告: 扩展 ID「${id}」看起来不像 Chrome 扩展 ID（通常是 32 位 a-p）。继续安装…" >&2
+    fi
+    ORIGINS+=("chrome-extension://${id}/")
+  done
+  write_chrome_manifest "${CHROME_NM}" "${ORIGINS[@]}"
+  write_chrome_manifest "${CHROMIUM_NM}" "${ORIGINS[@]}"
+  write_chrome_manifest "${EDGE_NM}" "${ORIGINS[@]}"
+  printf '%s\n' "${EXT_IDS[@]}" > "${ID_FILE}"
+  echo ""
+  if [[ ${#EXT_IDS[@]} -eq 1 ]]; then
+    echo "已登记扩展 ID: ${EXT_IDS[0]}"
+  else
+    echo "已登记扩展 ID（共 ${#EXT_IDS[@]} 个）："
+    for id in "${EXT_IDS[@]}"; do
+      echo "  - ${id}"
+    done
   fi
-  ORIGIN="chrome-extension://${EXT_ID}/"
-  write_chrome_manifest "${CHROME_NM}" "${ORIGIN}"
-  write_chrome_manifest "${CHROMIUM_NM}" "${ORIGIN}"
-  write_chrome_manifest "${EDGE_NM}" "${ORIGIN}"
-  printf '%s\n' "${EXT_ID}" > "${ID_FILE}"
 else
   echo ""
   echo "已安装 Firefox Native Host（无需扩展 ID）。"

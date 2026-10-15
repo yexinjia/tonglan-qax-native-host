@@ -3,9 +3,9 @@
 # Usage:
 #   irm https://raw.githubusercontent.com/yexinjia/tonglan-qax-native-host/main/install-native-host.ps1 | iex
 #   OR: .\install-native-host.ps1
-#   Chrome/Edge: .\install-native-host.ps1 -ChromeExtensionId <id>
+#   Chrome/Edge: .\install-native-host.ps1 -ChromeExtensionId id1,id2
 param(
-  [string]$ChromeExtensionId = $env:EXTENSION_ID
+  [string[]]$ChromeExtensionId = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,6 +26,55 @@ function Get-PythonCmd {
     if ($cmd) { return $c }
   }
   return $null
+}
+
+function Split-ExtensionIds([string[]]$Raw) {
+  $out = [System.Collections.Generic.List[string]]::new()
+  foreach ($item in $Raw) {
+    if (-not $item) { continue }
+    foreach ($part in ($item -split '[,\s]+')) {
+      $p = $part.Trim()
+      if ($p) { $out.Add($p) }
+    }
+  }
+  return $out
+}
+
+function Read-IdsFromFile([string]$Path) {
+  if (-not (Test-Path $Path)) { return @() }
+  $text = (Get-Content $Path -Raw -ErrorAction SilentlyContinue)
+  if (-not $text) { return @() }
+  $text = $text.Trim()
+  if (-not $text) { return @() }
+  if ($text.StartsWith("[")) {
+    $parsed = $text | ConvertFrom-Json
+    if ($parsed -is [string]) { return @($parsed.Trim()) }
+    return @($parsed | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+  }
+  $ids = [System.Collections.Generic.List[string]]::new()
+  foreach ($line in ($text -split "`n")) {
+    $line = $line.Trim()
+    if (-not $line -or $line.StartsWith("#")) { continue }
+    foreach ($part in ($line -split '[,\s]+')) {
+      $p = $part.Trim()
+      if ($p) { $ids.Add($p) }
+    }
+  }
+  if ($ids.Count -eq 0) { return @($text.Trim()) }
+  return @($ids)
+}
+
+function Merge-ExtensionIds([string[]]$Existing, [string[]]$New) {
+  $seen = @{}
+  $merged = [System.Collections.Generic.List[string]]::new()
+  foreach ($id in ($Existing + $New)) {
+    if (-not $id) { continue }
+    if (-not $seen.ContainsKey($id)) {
+      $seen[$id] = $true
+      $merged.Add($id)
+    }
+  }
+  return @($merged)
 }
 
 if (-not (Get-PythonCmd)) {
@@ -74,28 +123,37 @@ $ffManifest = Join-Path $SupportDir "$HostName.firefox.json"
 Write-NmManifest $ffManifest @{ allowed_extensions = @($GeckoId) }
 Set-NmRegistry "Mozilla" $ffManifest
 
-# Chrome / Chromium / Edge if ID provided
-if (-not $ChromeExtensionId -and (Test-Path $IdFile)) {
-  $ChromeExtensionId = (Get-Content $IdFile -Raw).Trim()
+$newIds = Split-ExtensionIds $ChromeExtensionId
+if ($newIds.Count -eq 0 -and $env:EXTENSION_ID) {
+  $newIds = Split-ExtensionIds @($env:EXTENSION_ID)
 }
 
-if ($ChromeExtensionId) {
-  $origin = "chrome-extension://$ChromeExtensionId/"
+$existingIds = Read-IdsFromFile $IdFile
+$allIds = Merge-ExtensionIds $existingIds $newIds
+
+if ($allIds.Count -gt 0) {
+  foreach ($id in $allIds) {
+    if ($id -notmatch '^[a-p]{32}$') {
+      Write-Warning "扩展 ID「$id」看起来不像 Chrome 扩展 ID（通常是 32 位 a-p）。继续安装…"
+    }
+  }
+  $origins = @($allIds | ForEach-Object { "chrome-extension://$_/" })
   $chromeManifest = Join-Path $SupportDir "$HostName.chrome.json"
-  Write-NmManifest $chromeManifest @{ allowed_origins = @($origin) }
+  Write-NmManifest $chromeManifest @{ allowed_origins = $origins }
   Set-NmRegistry "Google\Chrome" $chromeManifest
   Set-NmRegistry "Chromium" $chromeManifest
   Set-NmRegistry "Microsoft\Edge" $chromeManifest
-  Set-Content -Path $IdFile -Value $ChromeExtensionId -Encoding UTF8
-  Write-Host "Chrome origin: $origin"
+  ($allIds -join "`n") + "`n" | Set-Content -Path $IdFile -Encoding UTF8 -NoNewline:$false
+  Write-Host "Chrome origins:"
+  foreach ($o in $origins) { Write-Host "  $o" }
 } else {
   Write-Host ""
   Write-Host "已安装 Firefox Native Host（无需扩展 ID）。"
   Write-Host "若还要在 Chrome / Edge 使用:"
-  Write-Host "  .\install-native-host.ps1 -ChromeExtensionId <扩展ID>"
+  Write-Host "  .\install-native-host.ps1 -ChromeExtensionId <扩展ID>[,<第二个ID>…]"
   Write-Host "或:"
   Write-Host "  irm $RawBase/install-native-host.ps1 | iex"
-  Write-Host "（先设置 `$env:EXTENSION_ID='你的ID'）"
+  Write-Host "（先设置 `$env:EXTENSION_ID='你的ID'；再次安装会合并 ID，不会覆盖）"
 }
 
 Write-Host ""
