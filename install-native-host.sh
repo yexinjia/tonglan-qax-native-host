@@ -138,7 +138,10 @@ PY
 
 write_firefox_manifest
 
-mapfile -t EXT_IDS < <(merge_ids)
+EXT_IDS=()
+while IFS= read -r _line || [[ -n "${_line}" ]]; do
+  [[ -n "${_line}" ]] && EXT_IDS+=("${_line}")
+done < <(merge_ids)
 
 if [[ ${#EXT_IDS[@]} -gt 0 ]]; then
   ORIGINS=()

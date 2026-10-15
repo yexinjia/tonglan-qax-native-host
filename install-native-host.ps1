@@ -94,20 +94,39 @@ foreach ($f in $files) {
 }
 
 $HostBat = Join-Path $SupportDir "open-qax-host.bat"
-# Native Messaging JSON uses escaped backslashes
-$HostBatJson = $HostBat.Replace("\", "\\")
 
-function Write-NmManifest([string]$Path, [hashtable]$Extra) {
+function Write-NmManifest([string]$Path, [string]$Mode, [string[]]$Values) {
+  # Write JSON via Python so allowed_* stay arrays even with one entry.
+  # Windows PowerShell 5.1 ConvertTo-Json collapses single-element arrays to scalars,
+  # which Native Messaging rejects.
   $dir = Split-Path -Parent $Path
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
-  $obj = [ordered]@{
-    name = $HostName
-    description = "Open URL in Qaxbrowser for Tonglan Qax Open"
-    path = $HostBat
-    type = "stdio"
-  }
-  foreach ($k in $Extra.Keys) { $obj[$k] = $Extra[$k] }
-  ($obj | ConvertTo-Json -Compress:$false) + "`n" | Set-Content -Encoding UTF8 -Path $Path
+  $py = Get-PythonCmd
+  $code = @'
+import json, sys
+from pathlib import Path
+path, host_name, host_bat, mode = sys.argv[1:5]
+values = sys.argv[5:]
+manifest = {
+    "name": host_name,
+    "description": "Open URL in Qaxbrowser for Tonglan Qax Open",
+    "path": host_bat,
+    "type": "stdio",
+}
+if mode == "origins":
+    manifest["allowed_origins"] = list(values)
+elif mode == "extensions":
+    manifest["allowed_extensions"] = list(values)
+else:
+    raise SystemExit("unknown mode: " + mode)
+Path(path).write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+'@
+  # stdin script ("-") avoids Windows quoting issues with multi-line python -c
+  $argv = @()
+  if ($py -eq "py") { $argv += "-3" }
+  $argv += @("-", $Path, $HostName, $HostBat, $Mode) + @($Values)
+  $code | & $py @argv
+  if ($LASTEXITCODE -ne 0) { throw "写入 Native Messaging manifest 失败: $Path" }
   Write-Host "已写入: $Path"
 }
 
@@ -120,7 +139,7 @@ function Set-NmRegistry([string]$BrowserKey, [string]$ManifestPath) {
 
 # Firefox
 $ffManifest = Join-Path $SupportDir "$HostName.firefox.json"
-Write-NmManifest $ffManifest @{ allowed_extensions = @($GeckoId) }
+Write-NmManifest $ffManifest "extensions" @($GeckoId)
 Set-NmRegistry "Mozilla" $ffManifest
 
 $newIds = Split-ExtensionIds $ChromeExtensionId
@@ -139,7 +158,7 @@ if ($allIds.Count -gt 0) {
   }
   $origins = @($allIds | ForEach-Object { "chrome-extension://$_/" })
   $chromeManifest = Join-Path $SupportDir "$HostName.chrome.json"
-  Write-NmManifest $chromeManifest @{ allowed_origins = $origins }
+  Write-NmManifest $chromeManifest "origins" $origins
   Set-NmRegistry "Google\Chrome" $chromeManifest
   Set-NmRegistry "Chromium" $chromeManifest
   Set-NmRegistry "Microsoft\Edge" $chromeManifest
